@@ -99,5 +99,5 @@ xelatex main_ar.tex       # Arabic
 
 ## Authors
 
-- Ghidaa Najib Khudur
-- Jamil Ibrahim Jouni
+- Ghidaa Najib Khadour
+- Jamil Ibrahim Joni
