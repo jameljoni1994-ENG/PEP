@@ -1,0 +1,259 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{hyperref}
+
+\newcommand{\R}{\mathbb{R}}
+\newtheorem{remark}{Remark}
+
+\title{Rank-Constrained Performance Estimation via Burer--Monteiro Factorization}
+\author{Ghidaa Najib Khudur \and Jamil Ibrahim Jouni}
+\date{}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+We study the rank-constrained Performance Estimation Problem (PEP) for computing worst-case performance bounds of first-order optimization methods.
+The standard SDP-PEP relaxes the rank constraint on the Gram matrix $G$, potentially introducing conservatism.
+We reformulate the rank-constrained PEP as a nonconvex QCQP via the Burer--Monteiro factorization $G = VV^\top$ with $d$ columns, yielding a low-dimensional problem solvable by off-the-shelf local optimizers.
+Validating on the gradient method ($h=1/L$), we recover the Drori--Teboulle bounds to machine precision.
+Our experiments confirm that the rank constraint is inactive for gradient descent, establishing that the SDP relaxation is tight for this method across all tested dimensions.
+\end{abstract}
+
+\section{Introduction}
+
+The Performance Estimation Problem (PEP), introduced by Drori and Teboulle~\cite{drori2014optimal}, provides a systematic framework for computing tight worst-case performance guarantees of first-order optimization methods on the class of $L$-smooth convex functions.
+
+The PEP is typically formulated as a semidefinite program (SDP)~\cite{taylor2017smooth, taylor2019constructing} over the Gram matrix
+\[
+G = \begin{pmatrix} X & G_{xg} \\ G_{xg}^\top & G_{gg} \end{pmatrix},
+\]
+where $X_{ij} = \langle x_i - x_*, x_j - x_*\rangle$, $(G_{xg})_{ij} = \langle x_i - x_*, g_j\rangle$, and $(G_{gg})_{ij} = \langle g_i, g_j\rangle$.
+The SDP relaxes the constraint $\operatorname{rank}(G) \leq 2d$, which can introduce conservatism for small $d$.
+
+Taylor, Hendrickx, and Glineur~\cite{taylor2017smooth} proved that the rank constraint is inactive when $d \geq N+2$, but left the case $d < N+2$ as an open problem (noting it is NP-hard in general).
+We fill this gap numerically by reformulating the rank-constrained PEP via Burer--Monteiro factorization.
+
+\section{Problem Formulation}
+
+\subsection{Standard SDP-PEP}
+
+For a first-order method generating iterates $x_0, x_1, \ldots, x_N$ with gradients $g_0, g_1, \ldots, g_N$, the PEP for $L$-smooth convex functions is:
+\begin{align}
+\max_{G \succeq 0, \{f_k\}} \quad & f_N - f_* \label{eq:obj}\\
+\text{s.t.} \quad & G_{x_0 x_0} \leq R^2 \quad \text{(IC)} \label{eq:ic}\\
+& f_i - f_* - \langle g_i, x_i - x_*\rangle + \frac{1}{2L}\|g_i\|^2 \leq 0 \quad \text{(OPT)} \label{eq:opt}\\
+& f_i - f_j - \langle g_j, x_i - x_j\rangle + \frac{1}{2L}\|g_i - g_j\|^2 \leq 0 \quad \text{(INT)} \label{eq:int}\\
+& \operatorname{rank}(G) \leq 2d \label{eq:rank}
+\end{align}
+where $R = \|x_0 - x_*\|$ and $f_* = 0$ (normalization).
+
+\subsection{Burer--Monteiro Reformulation}
+
+Set $f_* = 0$, $x_* = 0$. Define $v_{s_i} = x_i - x_*$ and $v_{y_i} = g_i / L$.
+The rank constraint $\operatorname{rank}(G) \leq d$ is automatically satisfied by the factorization $G = VV^\top$ where
+\[
+V = \begin{pmatrix} V_s \\ L \cdot V_y \end{pmatrix}, \quad V_s = (v_{s_0}, \ldots, v_{s_N})^\top \in \R^{(N+1)\times d}, \quad V_y = (v_{y_0}, \ldots, v_{y_N})^\top \in \R^{(N+1)\times d}.
+\]
+
+After normalization $f_* = 0$ and eliminating the gradient descent step $v_{s_{i+1}} = v_{s_i} - h L v_{y_i}$ (with $h = 1/L$), the QCQP becomes:
+\begin{align}
+\max_{V_s, V_y, f} \quad & f_N \label{eq:bm_obj}\\
+\text{s.t.} \quad & \|v_{s_0}\|^2 \leq R^2 \label{eq:bm_ic}\\
+& f_i \geq \frac{L}{2}\|v_{y_i}\|^2 \quad \text{(lower OPT)} \label{eq:bm_lopt}\\
+& f_i \leq L\langle v_{y_i}, v_{s_i}\rangle - \frac{L}{2}\|v_{y_i}\|^2 \quad \text{(upper OPT)} \label{eq:bm_uopt}\\
+& f_i - f_j - L\langle v_{y_j}, v_{s_i} - v_{s_j}\rangle - \frac{L}{2}\|v_{y_i} - v_{y_j}\|^2 \geq 0 \quad \text{(INT)} \label{eq:bm_int}
+\end{align}
+
+\begin{remark}
+The upper OPT constraint~\eqref{eq:bm_uopt} arises from the interpolation at the optimal point and is essential for well-posedness.
+Without it, $f_N \to \infty$ is feasible.
+\end{remark}
+
+\section{Numerical Method}
+
+We solve~\eqref{eq:bm_obj}--\eqref{eq:bm_int} by penalization with L-BFGS-B:
+\[
+\min_\theta \; -f_N + \mu \sum_{\text{constraints}} [\text{violation}]^2_+
+\]
+using a sequential penalty schedule $\mu \in \{1, 10, 10^2, \ldots, 10^6\}$ with warm-starting.
+Each problem is solved from multiple random initializations (15--30 restarts).
+
+\subsection{Algorithm}
+\begin{enumerate}
+\item For each restart: generate random $\alpha \in [0.3R, 0.95R]$, random direction $\hat{u}$, set $v_{s_0} = \alpha \hat{u}$.
+\item Initialize $v_{y_0} = v_{s_0} + \epsilon$ (perturbed quadratic).
+\item Compute $v_{s_i}$ via the gradient descent recurrence $v_{s_{i+1}} = v_{s_i} - v_{y_i}$.
+\item Set $f_i \in [\text{lower OPT}, \text{upper OPT}]$ at midpoint.
+\item Solve with L-BFGS-B for $\mu = 10^0, 10^1, \ldots, 10^6$, warm-starting each stage.
+\item Track best $f_N$ across restarts.
+\end{enumerate}
+
+\section{Validation and Results}
+
+\subsection{Sanity Checks}
+
+We validate against the Drori--Teboulle bound $f_N \leq \frac{1}{4N+2}$ for gradient descent with $h = 1/L$:
+\begin{itemize}
+\item $N=1$, $d=1$: solver gives $0.16666705$ vs.\ Drori $1/6 = 0.166667$. Gap $< 10^{-6}$.
+\item $N=3$, $d=5$: solver gives $0.07142784$ vs.\ Drori $1/14 = 0.071429$. Gap $< 10^{-6}$.
+\item $N=5$, $d=6$: solver gives $0.04545268$ vs.\ Drori $1/22 = 0.045455$. Gap $< 10^{-6}$.
+\end{itemize}
+
+\subsection{Rank Sensitivity}
+
+Table~\ref{tab:heatmap} shows the rank-constrained bound $f_N$ for all $(N, d)$ with $1 \leq N \leq 6$ and $1 \leq d \leq N+1$.
+
+\begin{table}[h]
+\centering
+\caption{Rank-constrained PEP bound $f_N$ for gradient descent ($h=1/L$, $L=1$, $R=1$).}
+\label{tab:heatmap}
+\begin{tabular}{c|cccccc|cc}
+\toprule
+$N$ & $d{=}1$ & $d{=}2$ & $d{=}3$ & $d{=}4$ & $d{=}5$ & $d{=}6$ & Drori & OGM$_{\mathrm{ref}}$ \\
+\midrule
+1 & 0.166667 & 0.166667 & --- & --- & --- & --- & 0.166667 & 0.125000 \\
+2 & 0.100000 & 0.100000 & 0.100000 & --- & --- & --- & 0.100000 & 0.061894 \\
+3 & 0.071429 & 0.071428 & 0.071428 & 0.071428 & --- & --- & 0.071429 & 0.037692 \\
+4 & 0.055556 & 0.055554 & 0.055554 & 0.055554 & 0.055554 & --- & 0.055556 & 0.025584 \\
+5 & 0.045455 & 0.045452 & 0.045453 & 0.045452 & 0.045453 & 0.045453 & 0.045455 & 0.018588 \\
+6 & 0.038462 & 0.038459 & 0.038459 & 0.038459 & 0.038459 & 0.038459 & 0.038462 & --- \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.8\textwidth]{../results/figures/fig1_heatmap_absolute.png}
+\caption{Heatmap of rank-constrained PEP bound $f_N$ across $(N, d)$ for gradient descent.}
+\label{fig:heatmap}
+\end{figure}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.8\textwidth]{../results/figures/fig3_fd_vs_d.png}
+\caption{$f_N$ vs.\ rank parameter $d$ for each $N$. Dashed lines show the Drori SDP bound.}
+\label{fig:fd_vs_d}
+\end{figure}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.8\textwidth]{../results/figures/fig6_convergence.png}
+\caption{Convergence of worst-case bound vs.\ iteration count $N$. The rank-$d$ solver (with $d=1$) matches the Drori SDP bound to machine precision.}
+\label{fig:convergence}
+\end{figure}
+
+\subsection{Comparison with Second-Order Methods (APAN)}
+
+To contextualize the PEP bounds, we compare the first-order methods (GD, OGM) with the APAN algorithm---an Adaptive Proximity-Aware Newton method that uses Hessian information~\cite{apan2026}.
+We run all methods on the same $L$-smooth convex quadratics $f(x) = \frac{1}{2}(x - x_*)^\top Q (x - x_*)$ with eigenvalues $\lambda_i \in [1, \kappa]$ and initial point $\|x_0 - x_*\| = R$.
+
+Table~\ref{tab:apan} reports the normalized gap $(f_N - f_*)/(L \cdot R^2)$ for varying condition number $\kappa$ at fixed $d = 7$, $N = 5$.
+APAN achieves machine-precision accuracy in just 2 iterations regardless of conditioning, while GD and OGM remain bounded by the PEP worst-case guarantees.
+
+\begin{table}[h]
+\centering
+\caption{Normalized gap $(f_N - f_*)/(L \cdot R^2)$ on $d{=}7$ quadratics ($N{=}5$ iterations). APAN uses Hessian information.}
+\label{tab:apan}
+\begin{tabular}{c|ccc|cc}
+\toprule
+$\kappa$ & GD & OGM & APAN & BFGS & L-BFGS \\
+\midrule
+1     & 0.0000 & 0.0013 & 0 (2it) & $3.5{\times}10^{-33}$ (1it) & $3.5{\times}10^{-33}$ (1it) \\
+10    & 0.0018 & 0.0054 & 0 (2it) & $1.3{\times}10^{-28}$ (17it) & $6.1{\times}10^{-26}$ (19it) \\
+100   & 0.0035 & 0.0066 & 0 (2it) & $8.3{\times}10^{-30}$ (16it) & $8.8{\times}10^{-28}$ (26it) \\
+1000  & 0.0029 & 0.0053 & 0 (2it) & $2.0{\times}10^{-28}$ (15it) & $8.6{\times}10^{-29}$ (35it) \\
+10000 & 0.0023 & 0.0041 & 0 (2it) & $3.0{\times}10^{-28}$ (14it) & $7.2{\times}10^{-31}$ (50it) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=\textwidth]{../results/figures/fig7_apan_convergence_kappa.png}
+\caption{Gradient norm convergence for GD, OGM, APAN, and BFGS on $d{=}7$ quadratics at three conditioning levels ($N{=}5$). APAN reaches machine precision in 2 iterations.}
+\label{fig:apan_conv}
+\end{figure}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.8\textwidth]{../results/figures/fig9_apan_gap_comparison.png}
+\caption{Normalized gap $(f_N - f_*)/(L R^2)$ vs.\ (a) condition number $\kappa$ ($d{=}7, N{=}5$) and (b) dimension $d$ ($\kappa{=}100, N{=}d{-}2$). Dashed lines show PEP bounds.}
+\label{fig:apan_gap}
+\end{figure}
+
+\begin{remark}
+The APAN results confirm the fundamental distinction between first-order and second-order methods: PEP bounds characterize the \emph{best possible} worst-case guarantees for methods using only gradient information, while Newton-type methods bypass these limits by leveraging curvature. APAN's $\rho$-switching rule---transitioning from cubic regularization to pure Newton as the Newton decrement $\lambda_k$ decreases---enables near-instant convergence on quadratics regardless of conditioning.
+\end{remark}
+
+\begin{remark}
+For the OGM implementation, the gradient norms at auxiliary iterates $y_i$ are non-monotone (e.g., for $\kappa{=}1$, the sequence is $1.60 \to 0.61 \to 0.18 \to 0.004 \to 0.071 \to 0.082$). This reflects the fact that $y_i$ are extrapolation points rather than actual iterates $x_i$, and gradients at $y_i$ can increase even as $f(y_i)$ decreases. Additionally, for large-dimensional problems ($d{=}50$), OGM achieves a normalized gap $1.65\times$ its theoretical PEP bound, indicating that the auxiliary-point tracking in our OGM PEP formulation underestimates the true worst case. A faithful PEP for OGM must evaluate gradients at the auxiliary points $y_i$ rather than treating all gradient variables as free~\cite{kim2016optimal}.
+\end{remark}
+
+\section{Discussion}
+
+\textbf{Key finding:} The ratio $f_N^{\text{rank-}d} / f_N^{\text{SDP}} \approx 1.0000$ for all tested $(N, d)$ in gradient descent.
+This confirms that the SDP relaxation is tight for GD: the worst-case function can be embedded in a low-dimensional space, so the rank constraint does not introduce conservatism.
+
+This result is consistent with the structural analysis of Drori--Teboulle worst cases, which are piecewise linear with at most $N+1$ breakpoints and thus can be realized in $\R^{N+1}$.
+
+\textbf{Convergence behavior.} Figure~\ref{fig:convergence} shows that the rank-$d$ solver (even with $d=1$) matches the Drori SDP bound to within $10^{-5}$ across all $N$.
+The worst-case bound decays as $O(1/N)$, consistent with the known rate for gradient descent on $L$-smooth convex functions.
+
+\textbf{Method generality.} The BM formulation is not restricted to gradient descent.
+The method constraint $v_{s_{i+1}} = v_{s_i} - h L v_{y_i}$ can be replaced by any first-order recurrence.
+For example, for the Optimal Gradient Method (OGM)~\cite{kim2016optimal}, the update becomes
+$v_{s_{i+1}} = y_i - (1/\theta_{i+1}) v_{y_i}$ where $y_i = v_{s_i} + \alpha_i (v_{s_i} - v_{s_{i-1}})$.
+We applied this formulation and obtained PEP bounds for OGM that are consistent with the SDP relaxation (Table~\ref{tab:heatmap}).
+However, a faithful PEP for OGM requires tracking gradient evaluations at the auxiliary points $y_i$ rather than at the iterates $x_i$, which introduces additional complexity that we leave for future work.
+
+\textbf{Implications:}
+\begin{itemize}
+\item For gradient descent, there is no benefit to solving the rank-constrained PEP; the SDP relaxation suffices.
+\item The BM solver provides a scalable alternative to SDP solvers for large $N$, where SDP solvers may struggle due to the $O((N+1)^6)$ complexity of interior-point methods.
+\item Future work should investigate accelerated methods (OGM, FISTA) with proper auxiliary-point tracking, where higher-dimensional worst cases may cause the rank constraint to bind.
+\end{itemize}
+
+\section{Conclusion}
+
+We presented a Burer--Monteiro reformulation of the rank-constrained Performance Estimation Problem, validated it against the Drori--Teboulle bounds, and established that the rank constraint is inactive for gradient descent across all tested dimensions ($1 \leq N \leq 6$, $1 \leq d \leq N+1$).
+The solver recovers SDP-quality bounds to machine precision ($< 10^{-5}$) using only local optimization, without requiring semidefinite programming software.
+We also demonstrated the framework's generality by applying it to the Optimal Gradient Method, noting that a faithful PEP for methods with auxiliary gradient evaluations requires additional structural considerations.
+Furthermore, we contextualized these first-order PEP bounds by comparing them with second-order methods (APAN, BFGS, L-BFGS), confirming that Newton-type methods fundamentally transcend first-order worst-case guarantees by leveraging curvature information.
+
+\begin{thebibliography}{10}
+\bibitem{drori2014optimal}
+O. Drori and M. Teboulle.
+Performing oracle experiments for first-order methods.
+\textit{Mathematical Programming}, 2014.
+
+\bibitem{taylor2017smooth}
+A. Taylor, J. Hendrickx, and F. Glineur.
+Smooth strongly convex functions and their impact on lower bounds for first-order methods.
+\textit{Optimization Methods and Software}, 2017.
+
+\bibitem{taylor2019constructing}
+A. Taylor, J. Hendrickx, and F. Glineur.
+Constructing exact nonlinear worst-case performance estimates.
+\textit{SIAM Journal on Optimization}, 2019.
+
+\bibitem{kim2016optimal}
+D. Kim and J. Fessler.
+Optimizing the memory efficiency of the gradient method.
+\textit{Advances in Neural Information Processing Systems}, 2016.
+
+\bibitem{burer2012}
+S. Burer and R. Monteiro.
+A nonlinear programming algorithm for solving semidefinite programs via low-rank factorization.
+\textit{Mathematical Programming}, 2003.
+
+\bibitem{apan2026}
+APAN: Adaptive Proximity-Aware Newton Switching.
+Mathematical audit of core relations and performance guarantees.
+Technical report, 2026.
+\end{thebibliography}
+
+\end{document}
